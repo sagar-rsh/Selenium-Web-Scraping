@@ -44,7 +44,6 @@ def get_dnb_data(site_url, client_name):
     search_client.send_keys(client_name + Keys.RETURN)
 
     # Select/Click the first result
-    # browser.execute_script("window.scrollTo(100,document.body.scrollHeight);")
     try:
         client_page = WebDriverWait(browser, 20).until(
             EC.element_to_be_clickable(
@@ -87,6 +86,7 @@ def get_clientSite_data(client_name, client_search_addr):
             site_addr = WebDriverWait(browser, 15).until(
                 EC.presence_of_element_located(
                     (By.XPATH, xpath))).text
+            break
         except (NoSuchElementException, TimeoutException):
             pass
 
@@ -97,8 +97,8 @@ def get_clientSite_data(client_name, client_search_addr):
         EC.presence_of_element_located(
             (By.XPATH, '//*[@id="tsf"]/div[1]/div[1]/div[2]/div/div[2]/input')))
 
-    # Send the data to the input tag and return/enter/search
     search_client.clear()
+    # Send the data to the input tag and return/enter/search
     search_client.send_keys(search_term + Keys.RETURN)
 
     browser.find_element_by_tag_name('h3').click()
@@ -116,13 +116,13 @@ def write_csv(client_list, dnb_urls, dnb_addrs, client_urls, client_addrs):
     df = pd.DataFrame(client_data)
 
     # Write to csv
-    df.to_csv('Client_Data.csv')
+    df.to_csv('Client_Data_1.csv')
 
 
 def main():
     client_search = ['Artemys Inc', 'BioComposites Ltd',
-                     'Biofactura', 'Chimagen Biosciences Ltd', 'Chinook Therapeutics Us', 'CytomX Therapeutics Inc', 'Baxalta US Inc', 'Janssen Pharmaceutica NV', 'Emmes Biopharma Global s.r.o']
-    client_search_addr = ['CA', 'ST5 5NL', '21701', '610000', 'Washington 98109-5311',
+                     'Biofactura', 'Chimagen Biosciences Ltd', 'Chinook Therapeutics US Inc', 'CytomX Therapeutics Inc', 'Baxalta US Inc', 'Janssen Pharmaceutica NV', 'Emmes Biopharma Global s.r.o']
+    client_search_addr = ['CA', 'ST5 5NL', '21701', '610000', 'Washington',
                           'California 94080-1840', 'Massachusetts 02421-2101', '2340 Belgium', '11000']
     client_list = []
     dnb_urls = []
