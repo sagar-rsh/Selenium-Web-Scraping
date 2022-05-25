@@ -6,6 +6,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 import pandas as pd
 
@@ -15,13 +16,16 @@ options.add_argument("start-maximized")
 options.add_argument('--disable-blink-features=AutomationControlled')
 options.add_experimental_option("excludeSwitches", ["enable-automation"])
 options.add_experimental_option('useAutomationExtension', False)
-options.page_load_strategy = 'eager'
+
+# Change the pageLoadStrategy to eager to make page interactive/ Don't wait for whole page to load
+caps = DesiredCapabilities().CHROME
+caps["pageLoadStrategy"] = "eager"
 
 
 # Import/Run Chrome Driver
 script_dir = os.path.dirname(os.path.realpath(__file__))
 executable_path = os.path.join(script_dir, "chromedriver.exe")
-browser = webdriver.Chrome(options=options,
+browser = webdriver.Chrome(desired_capabilities=caps, options=options,
                            executable_path=executable_path)
 browser.execute_script(
     "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -54,15 +58,15 @@ def get_dnb_data(site_url, client_name):
         # Scrape/Grab the client name
         client_name = WebDriverWait(browser, 10).until(
             EC.presence_of_element_located(
-                (By.XPATH, '//*[@id="page"]/div[3]/div/div/div[4]/div/div[1]/div/div[2]/div/div[1]/div[1]/span/span')))
+                (By.XPATH, '//*[@id="page"]/div[3]/div/div/div[4]/div/div[1]/div/div[2]/div/div[1]/div[1]/span/span'))).get_attribute("textContent")
 
         # Scrape/Grab the address data
         client_addr = WebDriverWait(browser, 10).until(
             EC.presence_of_element_located(
-                (By.XPATH, '//*[@id="company_profile_snapshot"]/div[2]/div[2]/span/span')))
+                (By.XPATH, '//*[@id="company_profile_snapshot"]/div[2]/div[2]/span/span'))).text
 
         # Return the name, url and the address
-        return client_name.text, browser.current_url, client_addr.text.replace(' See other locations', '')
+        return client_name, browser.current_url, client_addr.replace(' See other locations', '')
     except (NoSuchElementException, TimeoutException):
         return client_name, None, None
 
@@ -87,7 +91,7 @@ def get_clientSite_data(client_name, client_search_addr):
         try:
             site_addr = WebDriverWait(browser, 5).until(
                 EC.presence_of_element_located(
-                    (By.XPATH, xpath))).text
+                    (By.XPATH, xpath))).get_attribute("textContent")
             break
         except (NoSuchElementException, TimeoutException):
             pass
@@ -130,9 +134,11 @@ def get_sec_data(site_url, client_name):
     search_client.send_keys(client_name + Keys.RETURN)
 
     try:
-        WebDriverWait(browser, 2).until(
+        WebDriverWait(browser, 5).until(
             EC.element_to_be_clickable(
                 (By.XPATH, '//*[@id="entityInformationHeader"]'))).click()
+
+        time.sleep(1)
 
         client_addr = WebDriverWait(browser, 5).until(
             EC.presence_of_element_located(
@@ -145,6 +151,7 @@ def get_sec_data(site_url, client_name):
 
 
 def write_csv(client_list, dnb_urls, dnb_addrs, client_urls, client_addrs, sec_urls, sec_addrs):
+    print(sec_urls, '\n', sec_addrs)
     # Create a client_data dictionary to store each clients name, url and the address
     client_data = {'Client': client_list,
                    'DnB URL': dnb_urls,
@@ -158,7 +165,7 @@ def write_csv(client_list, dnb_urls, dnb_addrs, client_urls, client_addrs, sec_u
     df = pd.DataFrame(client_data)
 
     # Write to csv
-    df.to_csv('Client_Data.csv')
+    df.to_csv('Client_Data_1.csv')
 
 
 def main():
@@ -215,4 +222,6 @@ def main():
 
 
 if __name__ == '__main__':
+    start_time = time.time()
     main()
+    print("--- %s seconds ---" % (time.time() - start_time))
