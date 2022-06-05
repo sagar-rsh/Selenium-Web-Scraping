@@ -9,6 +9,10 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 import pandas as pd
+import pypostalwin
+from collections import ChainMap
+from rapidfuzz import fuzz
+from rapidfuzz.distance import Levenshtein
 
 # Options to bypass bot detection
 options = webdriver.ChromeOptions()
@@ -71,9 +75,9 @@ def get_dnb_data(site_url, client_name):
         return client_name, None, None
 
 
-def get_clientSite_data(client_name, client_search_addr):
+def get_clientSite_data(client_name, client_city):
     browser.get('https://google.com')
-    search_term = client_name + ' ' + client_search_addr + ' address'
+    search_term = client_name + ' ' + client_city + ' address'
 
     # Search for input tag
     search_client = WebDriverWait(browser, 10).until(
@@ -97,7 +101,7 @@ def get_clientSite_data(client_name, client_search_addr):
             pass
 
     search_term = search_term.replace(
-        client_search_addr + ' address', 'contact page')
+        client_city + ' address', 'contact page')
 
     search_client = WebDriverWait(browser, 10).until(
         EC.presence_of_element_located(
@@ -130,6 +134,7 @@ def get_sec_data(site_url, client_name):
         EC.presence_of_element_located(
             (By.XPATH, '//*[@id="company"]')))
 
+    time.sleep(2)
     # Send the data to the input tag and return/enter/search
     search_client.send_keys(client_name + Keys.RETURN)
 
@@ -150,8 +155,85 @@ def get_sec_data(site_url, client_name):
     return browser.current_url, client_addr
 
 
+def compare_addr(parsed_sample_addr, parsed_dnb_addr, parsed_client_addr, parsed_sec_addr):
+    dnb_similarity_factor, dnb_levenshtein_factor = 0, 0
+    client_similarity_factor, client_levenshtein_factor = 0, 0
+    sec_similarity_factor, sec_levenshtein_factor = 0, 0
+
+    # Encapsulate many dictionaries to one dictionary
+    sample_addr_dict = dict(ChainMap(*parsed_sample_addr))
+    dnb_addr_dict = dict(ChainMap(*parsed_dnb_addr))
+    client_addr_dict = dict(ChainMap(*parsed_client_addr))
+    sec_addr_dict = dict(ChainMap(*parsed_sec_addr))
+
+    for addr_key in sample_addr_dict:
+        try:
+            similarity_percent = fuzz.ratio(
+                sample_addr_dict[addr_key], dnb_addr_dict[addr_key])/100
+            dnb_similarity_factor += similarity_percent/len(parsed_sample_addr)
+
+            levenshtein_percent = Levenshtein.normalized_similarity(
+                sample_addr_dict[addr_key], dnb_addr_dict[addr_key])
+            dnb_levenshtein_factor += (levenshtein_percent /
+                                       len(parsed_sample_addr))
+
+            levenshtein_percent = Levenshtein.normalized_similarity(
+                sample_addr_dict[addr_key], client_addr_dict[addr_key])
+            client_levenshtein_factor += (levenshtein_percent /
+                                          len(parsed_sample_addr))
+
+            levenshtein_percent = Levenshtein.normalized_similarity(
+                sample_addr_dict[addr_key], sec_addr_dict[addr_key])
+            sec_levenshtein_factor += (levenshtein_percent /
+                                       len(parsed_sample_addr))
+        except KeyError:
+            pass
+
+    if dnb_levenshtein_factor > client_levenshtein_factor > sec_levenshtein_factor:
+        print(dnb_levenshtein_factor,
+              client_levenshtein_factor, sec_levenshtein_factor)
+    elif client_levenshtein_factor > dnb_levenshtein_factor > sec_levenshtein_factor:
+        print(dnb_levenshtein_factor,
+              client_levenshtein_factor, sec_levenshtein_factor)
+    else:
+        print(dnb_levenshtein_factor,
+              client_levenshtein_factor, sec_levenshtein_factor)
+
+    # return (dnb_similarity_factor, dnb_levenshtein_factor)
+
+
+def parse_addr(client_search_addr, dnb_addrs, client_addrs, sec_addrs):
+    parser = pypostalwin.AddressParser()
+
+    for addr_idx in range(len(client_search_addr)):
+        print('Before Comparison')
+
+        print('Sample')
+        parsed_sample_addr = parser.runParser(client_search_addr[addr_idx])
+        print(parsed_sample_addr, '\n')
+
+        print('Fetched from DNB')
+        parsed_dnb_addr = parser.runParser(
+            dnb_addrs[addr_idx]) if dnb_addrs[addr_idx] else ''
+        print(parsed_dnb_addr, '\n')
+
+        print('Fetched from Google')
+        parsed_client_addr = parser.runParser(
+            client_addrs[addr_idx]) if client_addrs[addr_idx] else ''
+        print(parsed_client_addr, '\n')
+
+        print('Fetched from sec.gov')
+        parsed_sec_addr = parser.runParser(
+            sec_addrs[addr_idx]) if sec_addrs[addr_idx] else ''
+        print(parsed_sec_addr, '\n')
+
+        print('After Comparison')
+        print(compare_addr(parsed_sample_addr, parsed_dnb_addr,
+                           parsed_client_addr, parsed_sec_addr))
+        print('\n \n')
+
+
 def write_csv(client_list, dnb_urls, dnb_addrs, client_urls, client_addrs, sec_urls, sec_addrs):
-    print(sec_urls, '\n', sec_addrs)
     # Create a client_data dictionary to store each clients name, url and the address
     client_data = {'Client': client_list,
                    'DnB URL': dnb_urls,
@@ -165,14 +247,19 @@ def write_csv(client_list, dnb_urls, dnb_addrs, client_urls, client_addrs, sec_u
     df = pd.DataFrame(client_data)
 
     # Write to csv
-    df.to_csv('Client_Data_1.csv')
+    df.to_csv('Client_Data.csv')
 
 
 def main():
     client_search_list = ['Artemys Inc', 'BioComposites Ltd',
-                          'Biofactura', 'Chimagen Biosciences Ltd', 'Chinook Therapeutics US Inc', 'CytomX Therapeutics Inc', 'Baxalta US Inc', 'Janssen Pharmaceutica NV', 'Emmes Biopharma Global s.r.o']
-    client_search_addr = ['CA', 'ST5 5NL', '21701', '610000', 'Washington',
-                          'California 94080-1840', 'Massachusetts 02421-2101', '2340 Belgium', '11000']
+                          'Biofactura', 'Chimagen Biosciences Ltd', 'Chinook Therapeutics US Inc', 'CytomX Therapeutics Inc', 'Baxalta US Inc', 'Janssen Pharmaceutica NV']
+    # , 'Emmes Biopharma Global s.r.o'
+    client_search_addr = ['1933 Davis St Suite 244, San Leandro, CA 94577, United States', 'Keele Science Park, Keele University, Keele,ST5 5NL,United Kingdom',
+                          '8435 Progress Dr, Frederick, Maryland 21701,United States', 'No 5 Keyuan S Rd, Bldg 1 Fl 9, Chengdu, 610000,China', 'Ste 100,1600 Fairview Ave E,Seattle, Washington 98109-5311,United States', '151 Oyster Point Blvd,Ste 400,South San Francisco, California 94080-1840,United States', '650 Kendall DrCambridge, Massachusetts 02421-2101,United States', 'Turnhoutseweg 30,Beerse, 2340,Belgium']
+    # , 'V Jame 699/1,Prague 1, 11000,Czech Republic'
+
+    client_city = ['CA', 'ST5 5NL', '21701', '610000', 'Washington',
+                   'California 94080-1840', 'Massachusetts 02421-2101', '2340 Belgium', '11000']
     client_list = []
     dnb_urls = []
     dnb_addrs = []
@@ -180,8 +267,6 @@ def main():
     client_addrs = []
     sec_urls = []
     sec_addrs = []
-
-    # Change the name
 
     dnb_url = 'https://www.dnb.com/business-directory.html#CompanyProfilesPageNumber=1&ContactProfilesPageNumber=1&DAndBMarketplacePageNumber=1&IndustryPageNumber=1&SiteContentPageNumber=1&tab=Company%20Profiles'
 
@@ -203,7 +288,7 @@ def main():
         dnb_addrs.append(client_addr)
 
         client_url, client_addr = get_clientSite_data(
-            client_search_list[client_idx], client_search_addr[client_idx])
+            client_search_list[client_idx], client_city[client_idx])
 
         client_urls.append(client_url)
         client_addrs.append(client_addr)
@@ -219,6 +304,8 @@ def main():
     # print(get_clientSite_data('BIOCOMPOSITES (UK) LIMITED'))
 
     browser.quit()
+
+    parse_addr(client_search_addr, dnb_addrs, client_addrs, sec_addrs)
 
 
 if __name__ == '__main__':
