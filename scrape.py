@@ -13,6 +13,7 @@ import pypostalwin
 from collections import ChainMap
 from rapidfuzz import fuzz
 from rapidfuzz.distance import Levenshtein
+import pycountry
 
 # Options to bypass bot detection
 options = webdriver.ChromeOptions()
@@ -47,8 +48,8 @@ def get_dnb_data(site_url, client_name):
 
     # Search for input tag
     search_client = WebDriverWait(browser, 20).until(
-        EC.presence_of_element_located(
-            (By.XPATH, '//*[@id="page"]/div[2]/div/div[1]/div/div/div[4]/div[1]/div/div/div[1]/input')))
+        EC.element_to_be_clickable(
+            (By.XPATH, '/html/body/div[1]/div[2]/div/div[1]/div/div/div[4]/div[1]/div/div/div[1]/input')))
 
     # Send the data to the input tag and return/enter/search
     search_client.send_keys(client_name + Keys.RETURN)
@@ -62,7 +63,7 @@ def get_dnb_data(site_url, client_name):
         # Scrape/Grab the client name
         client_name = WebDriverWait(browser, 10).until(
             EC.presence_of_element_located(
-                (By.XPATH, '//*[@id="page"]/div[3]/div/div/div[4]/div/div[1]/div/div[2]/div/div[1]/div[1]/span/span'))).get_attribute("textContent")
+                (By.XPATH, '/html/body/div[2]/div[3]/div/div/div[5]/div/div/div/div[2]/div/div[1]/div[1]/span/span'))).get_attribute("textContent")
 
         # Scrape/Grab the address data
         client_addr = WebDriverWait(browser, 10).until(
@@ -155,10 +156,32 @@ def get_sec_data(site_url, client_name):
     return browser.current_url, client_addr
 
 
+def desired_addr_format(addr):
+    addr = dict(ChainMap(*addr))
+    country = pycountry.countries.get(name=addr.get('country', ''))
+    addr_str = ''
+    addr_list_str = []
+    addr_dict = {
+        'Address_Line 2': f"{addr.get('unit', '')}".strip(),
+        'Address Line 3': f"{addr.get('house_number', '')} {addr.get('house', '')} {addr.get('road', '')}".strip(),
+        'City': f"{addr.get('city', '')}".strip(),
+        'State': f"{addr.get('state', '')}".strip(),
+        'PostalCode': f"{addr.get('postcode', '')}".strip(),
+        'CountryCode_2': country.alpha_2 if country else '',
+        'CountryCode_3': country.alpha_3 if country else ''
+    }
+
+    for key, val in addr_dict.items():
+        addr_str += f"{key}: {val} \n"
+    # print(addr_dict)
+    # print(addr_str)
+    return addr_str
+
+
 def compare_addr(parsed_sample_addr, parsed_dnb_addr, parsed_client_addr, parsed_sec_addr):
-    dnb_similarity_factor, dnb_levenshtein_factor = 0, 0
-    client_similarity_factor, client_levenshtein_factor = 0, 0
-    sec_similarity_factor, sec_levenshtein_factor = 0, 0
+    dnb_levenshtein_factor = 0
+    client_levenshtein_factor = 0
+    sec_levenshtein_factor = 0
 
     # Encapsulate many dictionaries to one dictionary
     sample_addr_dict = dict(ChainMap(*parsed_sample_addr))
@@ -167,11 +190,17 @@ def compare_addr(parsed_sample_addr, parsed_dnb_addr, parsed_client_addr, parsed
     sec_addr_dict = dict(ChainMap(*parsed_sec_addr))
 
     for addr_key in sample_addr_dict:
-        try:
-            similarity_percent = fuzz.ratio(
-                sample_addr_dict[addr_key], dnb_addr_dict[addr_key])/100
-            dnb_similarity_factor += similarity_percent/len(parsed_sample_addr)
+        if addr_key == 'postcode':
+            sample_addr_dict[addr_key] = sample_addr_dict[addr_key].split(
+                '-')[0] if addr_key in sample_addr_dict else ''
+            dnb_addr_dict[addr_key] = dnb_addr_dict[addr_key].split(
+                '-')[0] if addr_key in dnb_addr_dict else ''
+            client_addr_dict[addr_key] = client_addr_dict[addr_key].split(
+                '-')[0] if addr_key in client_addr_dict else ''
+            sec_addr_dict[addr_key] = sec_addr_dict[addr_key].split(
+                '-')[0] if addr_key in sec_addr_dict else ''
 
+        try:
             levenshtein_percent = Levenshtein.normalized_similarity(
                 sample_addr_dict[addr_key], dnb_addr_dict[addr_key])
             dnb_levenshtein_factor += (levenshtein_percent /
@@ -189,21 +218,15 @@ def compare_addr(parsed_sample_addr, parsed_dnb_addr, parsed_client_addr, parsed
         except KeyError:
             pass
 
-    if dnb_levenshtein_factor > client_levenshtein_factor > sec_levenshtein_factor:
-        print(dnb_levenshtein_factor,
-              client_levenshtein_factor, sec_levenshtein_factor)
-    elif client_levenshtein_factor > dnb_levenshtein_factor > sec_levenshtein_factor:
-        print(dnb_levenshtein_factor,
-              client_levenshtein_factor, sec_levenshtein_factor)
-    else:
-        print(dnb_levenshtein_factor,
-              client_levenshtein_factor, sec_levenshtein_factor)
+    similarity_factor_dict = {dnb_levenshtein_factor: parsed_dnb_addr,
+                              client_levenshtein_factor: parsed_client_addr, sec_levenshtein_factor: parsed_sec_addr}
 
-    # return (dnb_similarity_factor, dnb_levenshtein_factor)
+    return similarity_factor_dict
 
 
 def parse_addr(client_search_addr, dnb_addrs, client_addrs, sec_addrs):
     parser = pypostalwin.AddressParser()
+    addr_list_str = []
 
     for addr_idx in range(len(client_search_addr)):
         print('Before Comparison')
@@ -228,12 +251,19 @@ def parse_addr(client_search_addr, dnb_addrs, client_addrs, sec_addrs):
         print(parsed_sec_addr, '\n')
 
         print('After Comparison')
-        print(compare_addr(parsed_sample_addr, parsed_dnb_addr,
-                           parsed_client_addr, parsed_sec_addr))
+        similarity_factor_dict = compare_addr(parsed_sample_addr, parsed_dnb_addr,
+                                              parsed_client_addr, parsed_sec_addr)
         print('\n \n')
 
+        addr_str = desired_addr_format(
+            similarity_factor_dict[max(similarity_factor_dict)])
 
-def write_csv(client_list, dnb_urls, dnb_addrs, client_urls, client_addrs, sec_urls, sec_addrs):
+        addr_list_str.append(addr_str)
+
+    return addr_list_str
+
+
+def write_csv(client_list, dnb_urls, dnb_addrs, client_urls, client_addrs, sec_urls, sec_addrs, addr_list_str):
     # Create a client_data dictionary to store each clients name, url and the address
     client_data = {'Client': client_list,
                    'DnB URL': dnb_urls,
@@ -241,7 +271,8 @@ def write_csv(client_list, dnb_urls, dnb_addrs, client_urls, client_addrs, sec_u
                    'Client URL': client_urls,
                    'Client Address': client_addrs,
                    'SEC URL': sec_urls,
-                   'SEC Address': sec_addrs}
+                   'SEC Address': sec_addrs,
+                   'Address Lines': addr_list_str}
 
     # Create a dataframe of size n(no. of clients) * m (includes name, url, address)
     df = pd.DataFrame(client_data)
@@ -299,13 +330,14 @@ def main():
         sec_urls.append(client_url)
         sec_addrs.append(client_addr)
 
-    write_csv(client_list, dnb_urls, dnb_addrs, client_urls,
-              client_addrs, sec_urls, sec_addrs)
     # print(get_clientSite_data('BIOCOMPOSITES (UK) LIMITED'))
 
     browser.quit()
 
-    parse_addr(client_search_addr, dnb_addrs, client_addrs, sec_addrs)
+    addr_list_str = parse_addr(
+        client_search_addr, dnb_addrs, client_addrs, sec_addrs)
+    write_csv(client_list, dnb_urls, dnb_addrs, client_urls,
+              client_addrs, sec_urls, sec_addrs, addr_list_str)
 
 
 if __name__ == '__main__':
