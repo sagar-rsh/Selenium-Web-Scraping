@@ -14,6 +14,7 @@ from collections import ChainMap
 from rapidfuzz import fuzz
 from rapidfuzz.distance import Levenshtein
 import pycountry
+import unicodedata
 
 # Options to bypass bot detection
 options = webdriver.ChromeOptions()
@@ -38,6 +39,16 @@ browser.execute_cdp_cmd('Network.setUserAgentOverride', {"userAgent": 'Mozilla/5
                                                          'AppleWebKit/537.36 (KHTML, like Gecko) '
                                                          'Chrome/85.0.4183.102 Safari/537.36'})
 # browser.set_page_load_timeout(25)
+
+# Initialize Address Parser
+parser = pypostalwin.AddressParser()
+
+# Removes special character from address before passing the address to the parser
+
+
+def remove_accents(input_str):
+    nfkd_form = unicodedata.normalize('NFKD', input_str)
+    return u"".join([c for c in nfkd_form if not unicodedata.combining(c)])
 
 
 # Accepts URL and client_name as the parameter
@@ -68,17 +79,20 @@ def get_dnb_data(site_url, client_name):
         # Scrape/Grab the address data
         client_addr = WebDriverWait(browser, 10).until(
             EC.presence_of_element_located(
-                (By.XPATH, '//*[@id="company_profile_snapshot"]/div[2]/div[2]/span/span'))).text
+                (By.XPATH, '//*[@id="company_profile_snapshot"]/div[2]/div[2]/span/span'))).get_attribute("innerText")
 
         # Return the name, url and the address
         return client_name, browser.current_url, client_addr.replace(' See other locations', '')
     except (NoSuchElementException, TimeoutException):
-        return client_name, None, None
+        return client_name, str(' '), str(' ')
 
 
-def get_clientSite_data(client_name, client_city):
+def get_clientSite_data(client_name, city_postcode):
+    # Send GET request to google/ Go to google.com
     browser.get('https://google.com')
-    search_term = client_name + ' ' + client_city + ' address'
+
+    # Set the search term to client name followed by city and postcode + address string to the input tag
+    search_term = client_name + ' ' + city_postcode + ' address'
 
     # Search for input tag
     search_client = WebDriverWait(browser, 10).until(
@@ -88,33 +102,43 @@ def get_clientSite_data(client_name, client_city):
     # Send the data to the input tag and return/enter/search
     search_client.send_keys(search_term + Keys.RETURN)
 
-    xpaths = ['//*[@id="rso"]/div[1]/div/div/div/div/div[1]/div/div[1]', '//*[@id="kp-wp-tab-overview"]/div[1]/div/div/div/div/div/div[4]/div/div/div/span[2]',
-              '//*[@id="kp-wp-tab-overview"]/div[1]/div/div/div/div/div/div[6]/div/div/div/span[2]']
+    site_addr = str(' ')
 
-    site_addr = ''
-    for xpath in xpaths:
+    try:
+        site_addr = WebDriverWait(browser, 5).until(
+            EC.presence_of_element_located(
+                (By.XPATH, '//*[@id="rso"]/div[1]/div/div/div/div/div[1]/div/div[1]'))).get_attribute("textContent")
+    except (NoSuchElementException, TimeoutException):
         try:
+            WebDriverWait(browser, 5).until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, '/html/body/div[7]/div/div[10]/div[1]/div[2]/div/div/div/div/div[2]/div[1]/div[1]/div/div/div/a[1]/div/div/div[1]/span'))).click()
+
             site_addr = WebDriverWait(browser, 5).until(
                 EC.presence_of_element_located(
-                    (By.XPATH, xpath))).get_attribute("textContent")
-            break
-        except (NoSuchElementException, TimeoutException):
+                    (By.XPATH, '/html/body/div[6]/div/div[9]/div[2]/div/div[2]/async-local-kp/div/div/div[1]/div/div/block-component/div/div[1]/div/div/div/div[1]/div/div/div[4]/div/div/span[2]'))).get_attribute("textContent")
+
+            browser.back()
+        except:
             pass
 
+    # Replace the address string with contact page string/ Change the search term
     search_term = search_term.replace(
-        client_city + ' address', 'contact page')
+        city_postcode + ' address', 'contact page')
 
+    # Search for the input tag
     search_client = WebDriverWait(browser, 10).until(
         EC.presence_of_element_located(
             (By.XPATH, '//*[@id="tsf"]/div[1]/div[1]/div[2]/div/div[2]/input')))
 
+    # Clear the input text area
     search_client.clear()
+
     # Send the data to the input tag and return/enter/search
     search_client.send_keys(search_term + Keys.RETURN)
 
+    # Go to the first site
     browser.find_element_by_tag_name('h3').click()
-
-    # time.sleep(2)
 
     return browser.current_url, site_addr
 
@@ -123,6 +147,7 @@ def get_sec_data(site_url, client_name):
     # Send GET request to site
     browser.get(site_url)
 
+    # Close the AD Popup
     try:
         WebDriverWait(browser, 1).until(
             EC.element_to_be_clickable(
@@ -135,11 +160,15 @@ def get_sec_data(site_url, client_name):
         EC.presence_of_element_located(
             (By.XPATH, '//*[@id="company"]')))
 
-    time.sleep(2)
+    time.sleep(1)
+
     # Send the data to the input tag and return/enter/search
-    search_client.send_keys(client_name + Keys.RETURN)
+    search_client.send_keys(client_name)
+    time.sleep(1)
+    search_client.send_keys(Keys.ENTER)
 
     try:
+        # Expand the dropdown
         WebDriverWait(browser, 5).until(
             EC.element_to_be_clickable(
                 (By.XPATH, '//*[@id="entityInformationHeader"]'))).click()
@@ -151,16 +180,28 @@ def get_sec_data(site_url, client_name):
                 (By.CSS_SELECTOR, '#businessAddress'))).get_attribute("textContent")
 
     except (NoSuchElementException, TimeoutException):
-        return None, None
+        try:
+            client_addr = WebDriverWait(browser, 5).until(EC.presence_of_element_located(
+                (By.XPATH, '/html/body/div[4]/div[1]/div[2]'))).get_attribute("textContent")
+
+            client_addr = client_addr.replace('Business Address', '').strip()
+
+            return browser.current_url, client_addr
+        except (NoSuchElementException, TimeoutException):
+            return str(' '), str(' ')
 
     return browser.current_url, client_addr
 
 
 def desired_addr_format(addr):
+    # Converts list of n dictionaries to list of dictionary
     addr = dict(ChainMap(*addr))
+
+    # Get the 2-digit and 3-digit country code
     country = pycountry.countries.get(name=addr.get('country', ''))
     addr_str = ''
-    addr_list_str = []
+
+    # Store the segregated address in a dictionary
     addr_dict = {
         'Address_Line 2': f"{addr.get('unit', '')}".strip(),
         'Address Line 3': f"{addr.get('house_number', '')} {addr.get('house', '')} {addr.get('road', '')}".strip(),
@@ -171,10 +212,10 @@ def desired_addr_format(addr):
         'CountryCode_3': country.alpha_3 if country else ''
     }
 
+    # Convert dictionary to string to store the data in one cell
     for key, val in addr_dict.items():
-        addr_str += f"{key}: {val} \n"
-    # print(addr_dict)
-    # print(addr_str)
+        addr_str += f"{key.upper()}: {val.upper()} \n"
+
     return addr_str
 
 
@@ -190,6 +231,7 @@ def compare_addr(parsed_sample_addr, parsed_dnb_addr, parsed_client_addr, parsed
     sec_addr_dict = dict(ChainMap(*parsed_sec_addr))
 
     for addr_key in sample_addr_dict:
+        # Compare only the first 5 digits of the postcode for accurate comparison
         if addr_key == 'postcode':
             sample_addr_dict[addr_key] = sample_addr_dict[addr_key].split(
                 '-')[0] if addr_key in sample_addr_dict else ''
@@ -200,6 +242,7 @@ def compare_addr(parsed_sample_addr, parsed_dnb_addr, parsed_client_addr, parsed
             sec_addr_dict[addr_key] = sec_addr_dict[addr_key].split(
                 '-')[0] if addr_key in sec_addr_dict else ''
 
+        # Levenshtein distance algo to compare two strings
         try:
             levenshtein_percent = Levenshtein.normalized_similarity(
                 sample_addr_dict[addr_key], dnb_addr_dict[addr_key])
@@ -218,6 +261,7 @@ def compare_addr(parsed_sample_addr, parsed_dnb_addr, parsed_client_addr, parsed
         except KeyError:
             pass
 
+    # store the similarity percent along with the address in a dictionary
     similarity_factor_dict = {dnb_levenshtein_factor: parsed_dnb_addr,
                               client_levenshtein_factor: parsed_client_addr, sec_levenshtein_factor: parsed_sec_addr}
 
@@ -225,9 +269,9 @@ def compare_addr(parsed_sample_addr, parsed_dnb_addr, parsed_client_addr, parsed
 
 
 def parse_addr(client_search_addr, dnb_addrs, client_addrs, sec_addrs):
-    parser = pypostalwin.AddressParser()
     addr_list_str = []
 
+    # Send the unparsed address to the parser to segregate the address into house, state, city, postalcode, country, etc
     for addr_idx in range(len(client_search_addr)):
         print('Before Comparison')
 
@@ -236,18 +280,29 @@ def parse_addr(client_search_addr, dnb_addrs, client_addrs, sec_addrs):
         print(parsed_sample_addr, '\n')
 
         print('Fetched from DNB')
-        parsed_dnb_addr = parser.runParser(
-            dnb_addrs[addr_idx]) if dnb_addrs[addr_idx] else ''
+        try:
+            parsed_dnb_addr = parser.runParser(dnb_addrs[addr_idx])
+        except:
+            # Pass the address to the remove accent function to remove special characters
+            parsed_dnb_addr = parser.runParser(
+                remove_accents(dnb_addrs[addr_idx]))
+
         print(parsed_dnb_addr, '\n')
 
         print('Fetched from Google')
-        parsed_client_addr = parser.runParser(
-            client_addrs[addr_idx]) if client_addrs[addr_idx] else ''
+        try:
+            parsed_client_addr = parser.runParser(client_addrs[addr_idx])
+        except:
+            parsed_client_addr = parser.runParser(
+                remove_accents(client_addrs[addr_idx]))
         print(parsed_client_addr, '\n')
 
         print('Fetched from sec.gov')
-        parsed_sec_addr = parser.runParser(
-            sec_addrs[addr_idx]) if sec_addrs[addr_idx] else ''
+        try:
+            parsed_sec_addr = parser.runParser(sec_addrs[addr_idx])
+        except:
+            parsed_sec_addr = parser.runParser(
+                remove_accents(sec_addrs[addr_idx]))
         print(parsed_sec_addr, '\n')
 
         print('After Comparison')
@@ -282,15 +337,22 @@ def write_csv(client_list, dnb_urls, dnb_addrs, client_urls, client_addrs, sec_u
 
 
 def main():
-    client_search_list = ['Artemys Inc', 'BioComposites Ltd',
-                          'Biofactura', 'Chimagen Biosciences Ltd', 'Chinook Therapeutics US Inc', 'CytomX Therapeutics Inc', 'Baxalta US Inc', 'Janssen Pharmaceutica NV']
-    # , 'Emmes Biopharma Global s.r.o'
-    client_search_addr = ['1933 Davis St Suite 244, San Leandro, CA 94577, United States', 'Keele Science Park, Keele University, Keele,ST5 5NL,United Kingdom',
-                          '8435 Progress Dr, Frederick, Maryland 21701,United States', 'No 5 Keyuan S Rd, Bldg 1 Fl 9, Chengdu, 610000,China', 'Ste 100,1600 Fairview Ave E,Seattle, Washington 98109-5311,United States', '151 Oyster Point Blvd,Ste 400,South San Francisco, California 94080-1840,United States', '650 Kendall DrCambridge, Massachusetts 02421-2101,United States', 'Turnhoutseweg 30,Beerse, 2340,Belgium']
-    # , 'V Jame 699/1,Prague 1, 11000,Czech Republic'
+    # Read Input/Sample data from excel sheet into dataframe
+    client_df = pd.read_excel('Client.xlsx')
 
-    client_city = ['CA', 'ST5 5NL', '21701', '610000', 'Washington',
-                   'California 94080-1840', 'Massachusetts 02421-2101', '2340 Belgium', '11000']
+    # Fetch the data from columns
+    client_search_list = client_df['Client'].tolist()
+    client_search_addr = client_df['Address'].tolist()
+    city_postcode = []
+
+    # get the city and postcode for seaching the address on google
+    for addr_idx in range(len(client_search_addr)):
+        client_search_addr[addr_idx] = client_search_addr[addr_idx].replace(
+            '\n', ', ')
+        temp = dict(ChainMap(*parser.runParser(client_search_addr[addr_idx])))
+        city_postcode.append(temp.get('city', '') +
+                             ' ' + temp.get('postcode', ''))
+
     client_list = []
     dnb_urls = []
     dnb_addrs = []
@@ -303,6 +365,7 @@ def main():
 
     sec_url = 'https://www.sec.gov/edgar/searchedgar/companysearch.html'
 
+    # Improves searching result
     for client_idx in range(len(client_search_list)):
         client_search_list[client_idx] = client_search_list[client_idx].replace(
             ' US ', ' U.S. ')
@@ -318,24 +381,27 @@ def main():
         dnb_urls.append(client_url)
         dnb_addrs.append(client_addr)
 
+        # Get data from google
         client_url, client_addr = get_clientSite_data(
-            client_search_list[client_idx], client_city[client_idx])
+            client_search_list[client_idx], city_postcode[client_idx])
 
         client_urls.append(client_url)
         client_addrs.append(client_addr)
 
+        # Get data from sec.gov
         client_url, client_addr = get_sec_data(
             sec_url, client_search_list[client_idx])
 
         sec_urls.append(client_url)
         sec_addrs.append(client_addr)
 
-    # print(get_clientSite_data('BIOCOMPOSITES (UK) LIMITED'))
-
     browser.quit()
 
+    # Send the fetched address into the parser function
     addr_list_str = parse_addr(
         client_search_addr, dnb_addrs, client_addrs, sec_addrs)
+
+    # Save data to csv
     write_csv(client_list, dnb_urls, dnb_addrs, client_urls,
               client_addrs, sec_urls, sec_addrs, addr_list_str)
 
@@ -343,4 +409,5 @@ def main():
 if __name__ == '__main__':
     start_time = time.time()
     main()
+    parser.terminateParser()
     print("--- %s seconds ---" % (time.time() - start_time))
