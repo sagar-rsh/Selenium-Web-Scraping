@@ -116,7 +116,8 @@ def get_clientSite_data(client_name, city_postcode):
 
             site_addr = WebDriverWait(browser, 5).until(
                 EC.presence_of_element_located(
-                    (By.XPATH, '/html/body/div[6]/div/div[9]/div[2]/div/div[2]/async-local-kp/div/div/div[1]/div/div/block-component/div/div[1]/div/div/div/div[1]/div/div/div[4]/div/div/span[2]'))).get_attribute("textContent")
+                    (By.XPATH, "//*[@class='LrzXr']"))).get_attribute("textContent")
+            #  '/html/body/div[6]/div/div[9]/div[2]/div/div[2]/async-local-kp/div/div/div[1]/div/div/block-component/div/div[1]/div/div/div/div[1]/div/div/div[4]/div/div/span[2]'))).get_attribute("textContent")
 
             browser.back()
         except:
