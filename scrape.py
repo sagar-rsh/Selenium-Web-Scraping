@@ -2,12 +2,14 @@ import os
 import time
 from webbrowser import Chrome
 from selenium import webdriver
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, WebDriverException
 import pandas as pd
 import pypostalwin
 from collections import ChainMap
@@ -19,25 +21,39 @@ import unicodedata
 # Options to bypass bot detection
 options = webdriver.ChromeOptions()
 options.add_argument("start-maximized")
+# options.add_argument("--headless")
 options.add_argument('--disable-blink-features=AutomationControlled')
+options.add_argument('--disable-site-isolation-trials')
 options.add_experimental_option("excludeSwitches", ["enable-automation"])
 options.add_experimental_option('useAutomationExtension', False)
-
 # Change the pageLoadStrategy to eager to make page interactive/ Don't wait for whole page to load
 caps = DesiredCapabilities().CHROME
 caps["pageLoadStrategy"] = "eager"
 
 
 # Import/Run Chrome Driver
-script_dir = os.path.dirname(os.path.realpath(__file__))
-executable_path = os.path.join(script_dir, "chromedriver.exe")
-browser = webdriver.Chrome(desired_capabilities=caps, options=options,
-                           executable_path=executable_path)
+# script_dir = os.path.dirname(os.path.realpath(__file__))
+# executable_path = os.path.join(script_dir, "chromedriver.exe")
+# browser = webdriver.Chrome(desired_capabilities=caps, options=options,
+#                            executable_path=executable_path)
+
+service = ChromeDriverManager().install()
+with open(service, "rb") as input_file:
+    content = input_file.read()
+    content = content.replace(b"cdc_", b"dog_")
+
+with open(service, "wb") as output_file:
+    output_file.write(content)
+
+browser = webdriver.Chrome(
+    service=Service(service), desired_capabilities=caps, options=options)
+
 browser.execute_script(
     "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-browser.execute_cdp_cmd('Network.setUserAgentOverride', {"userAgent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                                                         'AppleWebKit/537.36 (KHTML, like Gecko) '
-                                                         'Chrome/85.0.4183.102 Safari/537.36'})
+browser.execute_cdp_cmd('Network.setUserAgentOverride', {
+                        "userAgent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Safari/537.36'})
+
+
 # browser.set_page_load_timeout(25)
 
 # Initialize Address Parser
@@ -69,22 +85,22 @@ def get_dnb_data(site_url, client_name):
     try:
         client_page = WebDriverWait(browser, 10).until(
             EC.element_to_be_clickable(
-                (By.XPATH, '//*[@id="page"]/div[3]/div[1]/div/div/div[4]/div[2]/div[3]/div[2]/div[2]/table/tbody/tr[1]/td[1]/a[1]'))).click()
+                (By.XPATH, "(//*[@class='z20f9dcf9d844d2bf_tableCompanyNameLink _BH_iAJa6u2y3ordNzHR'])[1]"))).click()
 
         # Scrape/Grab the client name
         client_name = WebDriverWait(browser, 10).until(
             EC.presence_of_element_located(
-                (By.XPATH, '/html/body/div[2]/div[3]/div/div/div[5]/div/div/div/div[2]/div/div[1]/div[1]/span/span'))).get_attribute("textContent")
+                (By.XPATH, '//*[@class="company-profile-header-title"]'))).get_attribute("textContent")
 
         # Scrape/Grab the address data
         client_addr = WebDriverWait(browser, 10).until(
             EC.presence_of_element_located(
-                (By.XPATH, '//*[@id="company_profile_snapshot"]/div[2]/div[2]/span/span'))).get_attribute("innerText")
+                (By.XPATH, '//*[@name="company_address"]/span'))).get_attribute("textContent")
 
         # Return the name, url and the address
-        return client_name, browser.current_url, client_addr.replace(' See other locations', '')
+        return client_name, browser.current_url, client_addr.replace(' See other locations', '').strip()
     except (NoSuchElementException, TimeoutException):
-        return client_name, str(' '), str(' ')
+        return client_name, None, None
 
 
 def get_clientSite_data(client_name, city_postcode):
@@ -102,7 +118,7 @@ def get_clientSite_data(client_name, city_postcode):
     # Send the data to the input tag and return/enter/search
     search_client.send_keys(search_term + Keys.RETURN)
 
-    site_addr = str(' ')
+    site_addr = ''
 
     try:
         site_addr = WebDriverWait(browser, 5).until(
@@ -112,12 +128,12 @@ def get_clientSite_data(client_name, city_postcode):
         try:
             WebDriverWait(browser, 5).until(
                 EC.element_to_be_clickable(
-                    (By.XPATH, '/html/body/div[7]/div/div[10]/div[1]/div[2]/div/div/div/div/div[2]/div[1]/div[1]/div/div/div/a[1]/div/div/div[1]/span'))).click()
+                    (By.XPATH, '(//*[@class="OSrXXb"])[1]'))).click()
 
             site_addr = WebDriverWait(browser, 5).until(
                 EC.presence_of_element_located(
                     (By.XPATH, "//*[@class='LrzXr']"))).get_attribute("textContent")
-            #  '/html/body/div[6]/div/div[9]/div[2]/div/div[2]/async-local-kp/div/div/div[1]/div/div/block-component/div/div[1]/div/div/div/div[1]/div/div/div[4]/div/div/span[2]'))).get_attribute("textContent")
+            # '/html/body/div[6]/div/div[9]/div[2]/div/div[2]/async-local-kp/div/div/div[1]/div/div/block-component/div/div[1]/div/div/div/div[1]/div/div/div[4]/div/div/span[2]'))).get_attribute("textContent")
 
             browser.back()
         except:
@@ -139,7 +155,10 @@ def get_clientSite_data(client_name, city_postcode):
     search_client.send_keys(search_term + Keys.RETURN)
 
     # Go to the first site
-    browser.find_element_by_tag_name('h3').click()
+    try:
+        browser.find_element_by_tag_name('h3').click()
+    except:
+        return None, site_addr
 
     return browser.current_url, site_addr
 
@@ -157,16 +176,19 @@ def get_sec_data(site_url, client_name):
         pass
 
     # Search for input tag
-    search_client = WebDriverWait(browser, 10).until(
-        EC.presence_of_element_located(
-            (By.XPATH, '//*[@id="company"]')))
+    try:
+        search_client = WebDriverWait(browser, 10).until(
+            EC.presence_of_element_located(
+                (By.XPATH, '//*[@id="company"]')))
 
-    time.sleep(1)
+        time.sleep(1)
 
-    # Send the data to the input tag and return/enter/search
-    search_client.send_keys(client_name)
-    time.sleep(1)
-    search_client.send_keys(Keys.ENTER)
+        # Send the data to the input tag and return/enter/search
+        search_client.send_keys(client_name)
+        time.sleep(1)
+        search_client.send_keys(Keys.ENTER)
+    except:
+        return None, None
 
     try:
         # Expand the dropdown
@@ -189,7 +211,7 @@ def get_sec_data(site_url, client_name):
 
             return browser.current_url, client_addr
         except (NoSuchElementException, TimeoutException):
-            return str(' '), str(' ')
+            return None, None
 
     return browser.current_url, client_addr
 
@@ -281,29 +303,42 @@ def parse_addr(client_search_addr, dnb_addrs, client_addrs, sec_addrs):
         print(parsed_sample_addr, '\n')
 
         print('Fetched from DNB')
-        try:
-            parsed_dnb_addr = parser.runParser(dnb_addrs[addr_idx])
-        except:
+        # print(dnb_addrs[addr_idx])
+        if dnb_addrs[addr_idx]:
+            # try:
+            #     parsed_dnb_addr = parser.runParser(dnb_addrs[addr_idx])
+            # except:
             # Pass the address to the remove accent function to remove special characters
-            parsed_dnb_addr = parser.runParser(
-                remove_accents(dnb_addrs[addr_idx]))
-
+            addr = remove_accents(dnb_addrs[addr_idx]).encode(
+                "ascii", "ignore").decode()
+            parsed_dnb_addr = parser.runParser(addr)
+        else:
+            parsed_dnb_addr = {}
         print(parsed_dnb_addr, '\n')
 
         print('Fetched from Google')
-        try:
-            parsed_client_addr = parser.runParser(client_addrs[addr_idx])
-        except:
-            parsed_client_addr = parser.runParser(
-                remove_accents(client_addrs[addr_idx]))
+        if client_addrs[addr_idx]:
+            # try:
+            #     parsed_client_addr = parser.runParser(client_addrs[addr_idx])
+            # except:
+            addr = remove_accents(
+                client_addrs[addr_idx]).encode("ascii", "ignore").decode()
+
+            parsed_client_addr = parser.runParser(addr)
+        else:
+            parsed_client_addr = {}
         print(parsed_client_addr, '\n')
 
         print('Fetched from sec.gov')
-        try:
-            parsed_sec_addr = parser.runParser(sec_addrs[addr_idx])
-        except:
-            parsed_sec_addr = parser.runParser(
-                remove_accents(sec_addrs[addr_idx]))
+        if sec_addrs[addr_idx]:
+            # try:
+            #     parsed_sec_addr = parser.runParser(sec_addrs[addr_idx])
+            # except:
+            addr = remove_accents(sec_addrs[addr_idx]).encode(
+                "ascii", "ignore").decode()
+            parsed_sec_addr = parser.runParser(addr)
+        else:
+            parsed_sec_addr = {}
         print(parsed_sec_addr, '\n')
 
         print('After Comparison')
@@ -334,12 +369,14 @@ def write_csv(client_list, dnb_urls, dnb_addrs, client_urls, client_addrs, sec_u
     df = pd.DataFrame(client_data)
 
     # Write to csv
-    df.to_csv('Client_Data.csv')
+    df.to_csv('Client_Data_3.csv')
 
 
 def main():
     # Read Input/Sample data from excel sheet into dataframe
-    client_df = pd.read_excel('Client.xlsx')
+    # client_df = pd.read_excel('Client.xlsx')
+    client_data_sheet = input('Enter excel file name (with extension): ')
+    client_df = pd.read_excel(client_data_sheet)
 
     # Fetch the data from columns
     client_search_list = client_df['Client'].tolist()
@@ -362,7 +399,7 @@ def main():
     sec_urls = []
     sec_addrs = []
 
-    dnb_url = 'https://www.dnb.com/business-directory.html#CompanyProfilesPageNumber=1&ContactProfilesPageNumber=1&DAndBMarketplacePageNumber=1&IndustryPageNumber=1&SiteContentPageNumber=1&tab=Company%20Profiles'
+    dnb_url = 'https://www.dnb.com/business-directory.html'
 
     sec_url = 'https://www.sec.gov/edgar/searchedgar/companysearch.html'
 
